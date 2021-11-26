@@ -1,8 +1,10 @@
 // The only Halide header file you need is Halide.h. It includes all of Halide.
 #include "Halide.h"
 //Include library to open/save images
-#include "dcmtk/dcmimage/dicoimg.h"
+#include <dcmtk/dcmimgle/dcmimage.h>
+
 using namespace Halide;
+using std::cout;
 
 //Gamma correction
 void gamma(const uint8_t* src, uint8_t* dst, int height, int width, float gamma, bool gpu) {
@@ -29,10 +31,40 @@ void gamma(const uint8_t* src, uint8_t* dst, int height, int width, float gamma,
     out.copy_to_host();
 }
 
-int main(int argc, char **argv) {
-//    Buffer<uint8_t> input = Halide::Tools::load_image("SE0/1-001.dcm");
+Buffer<uint8_t> read_dicom_image(const char* filename) {
+    DicomImage *image = new DicomImage(filename);
+    if (image->getStatus() == EIS_Normal) {
+        if (image->isMonochrome()) {
+            image->setMinMaxWindow();
+            auto *pixelData = (Uint8 *) (image->getOutputData(8 /* bits */));
+            if (pixelData != nullptr) {
+                Buffer<uint8_t> inp((uint8_t *) pixelData, 3, image->getWidth(), image->getHeight());
+                return inp;
+            }
+            throw std::runtime_error("There is no data in the image!");
+        }
+    } else {
+        std::cerr << "Error: cannot load DICOM image (" << DicomImage::getString(image->getStatus()) << ")"
+                  << std::endl;
+        delete image;
+        throw std::runtime_error("Cannot load DICOM image!");
+    }
+}
 
-    //Halide::Tools::save_image(input, "output/1-001.dcm");
-    std::cout << "Everything's okay!";
+int main(int argc, char **argv) {
+    Buffer<uint8_t> image;
+    float gamma_exponent = 1.5; //Gamma correction constant
+    Func gamma;
+    Var x("x"), y("y"), c("c"), xo("xo"), xi("xi"), yo("yo"), yi("yi");
+    try {
+        image = read_dicom_image("/home/giuseppe/Desktop/PoliMi/NECSTCamp/LungCancerIdentification/1-001.dcm");
+    } catch (const std::exception &e) {
+        std::cerr << e.what() << std::endl;
+    }
+    gamma(c, x, y) = cast<uint8_t>(255 * pow(image(c, x, y) * 1.0f / 255, gamma_exponent));
+    gamma.realize();
+
+
+
     return 0;
 }

@@ -25,6 +25,8 @@ find_library(DINIFTI_DCMTK_LIB NAMES dcmimgle PATHS ${LIBDIR})
 target_link_libraries(LungCancerIdentification
         PRIVATE Halide::Halide
         dcmimgle
+        jpeg
+        png
         dcmdata
         ofstd
         )

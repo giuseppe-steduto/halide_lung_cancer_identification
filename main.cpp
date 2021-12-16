@@ -13,6 +13,71 @@ using std::cout;
 using std::cerr;
 using std::endl;
 
+class DisjointSet
+{
+    std::unordered_map<int, int> parent;
+
+public:
+    // perform MakeSet operation
+    void makeSet(std::vector<int> const &universe)
+    {
+        // create `n` disjoint sets (one for each item)
+        for (int i: universe) {
+            parent[i] = i;
+        }
+    }
+
+    void add_element(int element) {
+        parent[element] = element;
+    }
+
+    void add_equivalence(int a, int b) {
+        try {
+            int tmp = parent.at(a);
+        } catch (const std::out_of_range& e) {
+            add_element(a);
+        }
+        try {
+            int tmp = parent.at(b);
+        } catch (const std::out_of_range& e) {
+            add_element(b);
+        }
+        make_union(a, b);
+    }
+
+    // find the root of the set in which element `k` belongs
+    int find(int k)
+    {
+        // if `k` is root
+        if (parent[k] == k) {
+            return k;
+        }
+
+        // recur for the parent until we find the root
+        return find(parent[k]);
+    }
+
+    // Perform make_union of two subsets
+    void make_union(int a, int b)
+    {
+        // find the root of the sets in which elements `x` and `y` belongs
+        if (a == 0 || b == 0)
+            return;
+        int x = find(a);
+        int y = find(b);
+
+        parent[x] = y;
+    }
+
+    bool is_root(int k) {
+        if (parent[k] == k)
+            return true;
+        return false;
+    }
+};
+
+int get_label(int a, int b, DisjointSet* ds);
+
 Buffer<uint8_t> read_dicom_image(const char* filename) {
     DicomImage *image = new DicomImage(filename);
     if (image->getStatus() == EIS_Normal) {
@@ -55,6 +120,13 @@ Func sobel (Func in)
     sob(x, y, c) = (h(x, y, c) +
                     v(x, y, c)) / 4;
     return sob;
+}
+
+Func mask (Func in, Buffer<uint8_t> mask) {
+    Var x("x"), y("y");
+    Func mask_func("mask");
+    mask_func(x, y) = select(mask(x, y) == 255, in(x, y), 0);
+    return mask_func;
 }
 
 Expr binarize (Func in, int threshold) {
@@ -110,10 +182,87 @@ int get_otsu_treshold(Buffer<uint8_t> buffer) {
     return threshold;
 }
 
+void get_largest_cc(Buffer<uint8_t> buffer) {
+    DisjointSet equivalences;
+    int map[buffer.width()][buffer.height()]; //Matrix of labels for the pixels
+    std::unordered_map<int, int> labels; //How many pixels for each label
+    std::pair<int, int> max = std::make_pair(0, 0);
+
+    //First step: assign label to every pixel (0 for bg) and annote equivalences
+    for (int i = 0; i < buffer.width(); i++)
+        map[0][i] = 0;
+    for (int j = 0; j < buffer.height(); j++)
+        map[j][0] = 0;
+
+    int last_label = 0;
+    for (int x = 1; x < buffer.width(); x++) {
+        for (int y = 1; y < buffer.height() - 1; y++) {
+            //If pixel is background, skip to the next one
+            if (buffer(x, y) == 0) {
+                map[x][y] = 0;
+                continue;
+            }
+
+            //Assign label to pixel buffer(x, y) by checking the one above and the one to the left
+            if (map[x-1][y] == 0 && map[x][y-1] == 0) {
+                //Assign new label to pixel
+                last_label++;
+                map[x][y] = last_label;
+            }
+            else {
+                int selected_label = get_label(map[x-1][y], map[x][y-1], &equivalences);
+                map[x][y] = selected_label;
+            }
+        }
+    }
+
+    //Now take care of the equivalences
+    for (int x = 1; x < buffer.width(); x++) {
+        for (int y = 1; y < buffer.height() - 1; y++) {
+            if (map[x][y] == 0)
+                continue;
+            if (!equivalences.is_root(map[x][y])) {
+                map[x][y] = equivalences.find(map[x][y]);
+            }
+            try {
+                labels.at(map[x][y])++;
+            } catch (const std::out_of_range& e) {
+                labels[map[x][y]] = 1;
+            }
+            if (labels.at(map[x][y]) > max.second) {
+                max.first = map[x][y];
+                max.second = labels.at(map[x][y]);
+            }
+        }
+    }
+
+    //Now modify image to let only largest component remain
+    for (int x = 1; x < buffer.width(); x++) {
+        for (int y = 1; y < buffer.height() - 1; y++) {
+            if (map[x][y] != max.first) {
+                buffer(x, y) = 0;
+            } else {
+                buffer(x, y) = 255;
+            }
+        }
+    }
+}
+
+int get_label(int a, int b, DisjointSet* ds) {
+    if (a == 0) return b;
+    if (b == 0) return a;
+    if (a == b) return a;
+
+    //a and b have different labels, different from 0
+    ds->add_equivalence(a, b);
+    return a;
+}
+
 int main(int argc, char **argv) {
-    Buffer<uint8_t> image, complete;
+    Buffer<uint8_t> image, mask_buff, masked_buff;
     float gamma_exponent = 1.5; //Gamma correction constant
     Func gamma("gamma"), sobel_ed("sobel_edge_detecteor"), binarized("binarized_image"), eroded("eroded");
+    Func masked("masked");
     Func h("sobel_horizontal"), v("sobel_vertical"), sobel_bounded("sobel_edge_detector_bounded");
     Var x("x"), y("y"), c("c"), xo("xo"), xi("xi"), yo("yo"), yi("yi");
     try {
@@ -151,13 +300,15 @@ int main(int argc, char **argv) {
 
     //TODO get largest connected component
 
-    //TODO complement image (to be used as mask)
+    //Realize mask buffer and mask image
+    mask_buff = eroded.realize({image.width(), image.height(), image.channels()});
+    get_largest_cc(mask_buff);
 
-    //TODO mask image
+    masked(x, y) = select(mask_buff(x, y) == 255, gamma(x, y), 0);
+    masked_buff = masked.realize({image.width(), image.height(), image.channels()});
 
-    complete = eroded.realize({image.width(), image.height(), image.channels()});
-
-    Tools::save_image(complete, "/home/giuseppe/Desktop/PoliMi/NECSTCamp/LungCancerIdentification/dcm_modified.jpeg");
+    //Save masked image
+    Tools::save_image(masked_buff, "/home/giuseppe/Desktop/PoliMi/NECSTCamp/LungCancerIdentification/dcm_masked.jpeg");
     return 0;
 
     //Output file
@@ -169,7 +320,7 @@ int main(int argc, char **argv) {
     dataset->putAndInsertUint8Array(DCM_PixelData, image.begin(), image.size_in_bytes());
     dataset->putAndInsertString(DCM_SOPClassUID, UID_SecondaryCaptureImageStorage);
     dataset->putAndInsertString(DCM_SOPInstanceUID, dcmGenerateUniqueIdentifier(uid, SITE_INSTANCE_UID_ROOT));
-//    dataset->putAndInsertUint8Array(DCM_PixelData, complete.begin(), complete.size_in_bytes());
+//    dataset->putAndInsertUint8Array(DCM_PixelData, mask_buff.begin(), mask_buff.size_in_bytes());
     OFCondition status = output_file.saveFile("/home/giuseppe/Desktop/PoliMi/NECSTCamp/LungCancerIdentification/test.dcm", EXS_BigEndianExplicit);
     if (status.bad())
         cerr << "Error: cannot write DICOM file (" << status.text() << ")" << endl;

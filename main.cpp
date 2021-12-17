@@ -85,7 +85,7 @@ Buffer<uint8_t> read_dicom_image(const char* filename) {
             image->setMinMaxWindow();
             uint8_t* pixelData = (uint8_t *) (image->getOutputData(8));
             if (pixelData != nullptr) {
-                Buffer<uint8_t> inp((uint8_t *) pixelData, 3, image->getWidth(), image->getHeight());
+                Buffer<uint8_t> inp((uint8_t *) pixelData, image->getWidth(), image->getHeight(), 1);
                 cout << "Width: " << image->getWidth() << " | Height: " << image->getHeight() << " | Size (bytes): " << inp.size_in_bytes() << endl;
                 return inp;
             }
@@ -123,17 +123,17 @@ Func sobel (Func in)
 }
 
 Func mask (Func in, Buffer<uint8_t> mask) {
-    Var x("x"), y("y");
+    Var x("x"), y("y"), c("c");
     Func mask_func("mask");
-    mask_func(x, y) = select(mask(x, y) == 255, in(x, y), 0);
+    mask_func(x, y, c) = select(mask(x, y) == 255, in(x, y, c), 0);
     return mask_func;
 }
 
 Expr binarize (Func in, int threshold) {
     Func bin("binarize");
-    Var x("x"), y("y");
-    Expr tmp = in(x, y) - threshold;
-    return select(in(x, y) > threshold, cast<uint8_t>(255), cast<uint8_t>(0));
+    Var x("x"), y("y"), c("c");
+    Expr tmp = in(x, y, c) - threshold;
+    return select(in(x, y, c) > threshold, cast<uint8_t>(255), cast<uint8_t>(0));
 }
 
 int get_otsu_treshold(Buffer<uint8_t> buffer) {
@@ -266,15 +266,14 @@ int main(int argc, char **argv) {
     Func h("sobel_horizontal"), v("sobel_vertical"), sobel_bounded("sobel_edge_detector_bounded");
     Var x("x"), y("y"), c("c"), xo("xo"), xi("xi"), yo("yo"), yi("yi");
     try {
-//        image = read_dicom_image("/home/giuseppe/Desktop/PoliMi/NECSTCamp/LungCancerIdentification/1-001.dcm");
-        image = read_png_image("/home/giuseppe/Desktop/PoliMi/NECSTCamp/LungCancerIdentification/1-001.jpeg");
+        image = read_dicom_image("/home/giuseppe/Desktop/PoliMi/NECSTCamp/LungCancerIdentification/1-001.dcm");
     } catch (const std::exception &e) {
         cerr << "Errore nell'apertura del file:" << endl;
         cerr << e.what() << endl;
     }
 
     //Gamma correction
-    gamma(x, y) = cast<uint8_t>(255 * pow(image(x, y) * 1.0f / 255, gamma_exponent));
+    gamma(x, y, c) = cast<uint8_t>(255 * pow(image(x, y, c) * 1.0f / 255, gamma_exponent));
 
     //Sobel edge detection
 //    //TODO border handling for sobel edge detection
@@ -294,9 +293,9 @@ int main(int argc, char **argv) {
 
     //Image binarization and erosion
     int threshold = get_otsu_treshold(image);
-    binarized(x, y) = cast<uint8_t>(binarize(gamma, threshold));
+    binarized(x, y, c) = cast<uint8_t>(binarize(gamma, threshold));
     uint8_t erased_value = 0;
-    eroded(x, y) = BoundaryConditions::constant_exterior(binarized, erased_value, 2, image.width() - 4, 2, image.height() - 4)(x, y);
+    eroded(x, y, c) = BoundaryConditions::constant_exterior(binarized, erased_value, 2, image.width() - 4, 2, image.height() - 4)(x, y, c);
 
     //TODO get largest connected component
 
@@ -304,7 +303,7 @@ int main(int argc, char **argv) {
     mask_buff = eroded.realize({image.width(), image.height(), image.channels()});
     get_largest_cc(mask_buff);
 
-    masked(x, y) = select(mask_buff(x, y) == 255, gamma(x, y), 0);
+    masked(x, y, c) = select(mask_buff(x, y, c) == 255, gamma(x, y, c), 0);
     masked_buff = masked.realize({image.width(), image.height(), image.channels()});
 
     //Save masked image

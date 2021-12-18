@@ -178,7 +178,7 @@ int get_otsu_treshold(Buffer<uint8_t> buffer) {
             threshold = t;
         }
     }
-    cout << "Thre: " << threshold << endl;
+    cout << "Otsu threshold: " << threshold << endl;
     return threshold;
 }
 
@@ -248,6 +248,51 @@ void get_largest_cc(Buffer<uint8_t> buffer) {
     }
 }
 
+//TODO adjust background removal alogorithm
+void background_removal(Buffer<uint8_t> mask) {
+    int map[mask.width()][mask.height()]; //Matrix of labels for the pixels
+
+    bool isBg;
+    for (int i = 0; i < mask.height(); i++) {
+        int prev = mask(i, 0);
+        //From the beginning of the row (border), till another 0 is met (thorax), make
+        //all pixels 0 (as they're part of the background)
+        isBg = true;
+        for (int j = 1; isBg && j < mask.width(); j++) {
+            int curr = mask(i, j);
+            if (curr == 0) { //Is already removed from mask
+                prev = curr;
+                continue;
+            }
+
+            if (curr == prev) {
+                prev = curr;
+                mask(i, j) = 0;
+            } else {
+                isBg = false;
+            }
+        }
+
+        //Make the same calculation from the end of the row
+        isBg = true;
+        prev = mask(i, mask.width() - 1);
+        for(int j = mask.width() - 1; isBg && j >= 1; j--) {
+            int curr = mask(i, j);
+            if (curr == 0) { //Is already removed from mask
+                prev = 0;
+                continue;
+            }
+
+            if (curr == prev) {
+                prev = curr;
+                mask(i, j) = 0;
+            } else {
+                isBg = false;
+            }
+        }
+    }
+}
+
 int get_label(int a, int b, DisjointSet* ds) {
     if (a == 0) return b;
     if (b == 0) return a;
@@ -262,11 +307,11 @@ int main(int argc, char **argv) {
     Buffer<uint8_t> image, mask_buff, masked_buff;
     float gamma_exponent = 1.5; //Gamma correction constant
     Func gamma("gamma"), sobel_ed("sobel_edge_detecteor"), binarized("binarized_image"), eroded("eroded");
-    Func masked("masked");
+    Func masked("masked"), complement("complement");
     Func h("sobel_horizontal"), v("sobel_vertical"), sobel_bounded("sobel_edge_detector_bounded");
     Var x("x"), y("y"), c("c"), xo("xo"), xi("xi"), yo("yo"), yi("yi");
     try {
-        image = read_dicom_image("/home/giuseppe/Desktop/PoliMi/NECSTCamp/LungCancerIdentification/1-001.dcm");
+        image = read_dicom_image("/home/giuseppe/Desktop/PoliMi/NECSTCamp/LungCancerIdentification/SE0/1-138.dcm");
     } catch (const std::exception &e) {
         cerr << "Errore nell'apertura del file:" << endl;
         cerr << e.what() << endl;
@@ -297,18 +342,24 @@ int main(int argc, char **argv) {
     uint8_t erased_value = 0;
     eroded(x, y, c) = BoundaryConditions::constant_exterior(binarized, erased_value, 2, image.width() - 4, 2, image.height() - 4)(x, y, c);
 
-    //TODO get largest connected component
-
     //Realize mask buffer and mask image
     mask_buff = eroded.realize({image.width(), image.height(), image.channels()});
     get_largest_cc(mask_buff);
+
+    //Complement mask
+    complement(x, y, c) = cast<uint8_t>(select(mask_buff(x, y, c) == 255, 0, 255));
+
+    //Background removal from complemented mask
+    mask_buff = complement.realize({image.width(), image.height(), image.channels()});
+    background_removal(mask_buff);
+    Tools::save_image(mask_buff, "/home/giuseppe/Desktop/PoliMi/NECSTCamp/LungCancerIdentification/tmp_mask.jpeg"); //TODO REMOVE THIS
 
     masked(x, y, c) = select(mask_buff(x, y, c) == 255, gamma(x, y, c), 0);
     masked_buff = masked.realize({image.width(), image.height(), image.channels()});
 
     //Save masked image
     Tools::save_image(masked_buff, "/home/giuseppe/Desktop/PoliMi/NECSTCamp/LungCancerIdentification/dcm_masked.jpeg");
-    return 0;
+//    return 0;
 
     //Output file
     DcmFileFormat output_file;

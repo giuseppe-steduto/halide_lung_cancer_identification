@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED YES)
 set(CMAKE_CXX_EXTENSIONS NO)
 list(APPEND CMAKE_PREFIX_PATH "/usr/local/Halide/")
 
-add_executable(LungCancerIdentification main.cpp)
+add_executable(LungCancerIdentification main.cpp roi_definition.cpp)
 
 #Include Halide library
 find_package(Halide REQUIRED)

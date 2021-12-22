@@ -2,8 +2,8 @@
 #include <chrono>
 #include "roi_definition.cpp"
 
-#define PATH "/home/giuseppe/Desktop/PoliMi/NECSTCamp/LungCancerIdentification/SE1/"
-#define PATH_OUTPUT "/home/giuseppe/Desktop/PoliMi/NECSTCamp/LungCancerIdentification/output/"
+#define PATH "example/input/path/folder" //Change this to the directory where your scans are located
+#define PATH_OUTPUT "example/output/path/folder/" //Change this to the directory where you want to output the segmented images
 
 int main(int argc, char **argv) {
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();

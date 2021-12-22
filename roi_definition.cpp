@@ -295,15 +295,18 @@ inline int get_label(int a, int b, DisjointSet* ds) {
     return a;
 }
 
-inline int roi_definition(char* filename) {
+inline int roi_definition(char* filename, std::string output_path) {
     char* file_path;
+    std::string base_filename;
     Buffer<uint8_t> image, mask_buff, masked_buff;
     float gamma_exponent = 1.5; //Gamma correction constant
     Func gamma("gamma"), sobel_ed("sobel_edge_detecteor"), binarized("binarized_image"), eroded("eroded");
     Func masked("masked"), complement("complement");
     Func h("sobel_horizontal"), v("sobel_vertical"), sobel_bounded("sobel_edge_detector_bounded");
     Var x("x"), y("y"), c("c"), xo("xo"), xi("xi"), yo("yo"), yi("yi");
-    try {;
+    try {
+        std::string path(filename);
+        base_filename = path.substr(path.find_last_of("/\\") + 1);
         file_path = filename;
         image = read_dicom_image(file_path);
     } catch (const std::exception &e) {
@@ -311,8 +314,6 @@ inline int roi_definition(char* filename) {
         cerr << e.what() << endl;
         return 1;
     }
-
-    Tools::save_image(image, strcat(file_path, "converted.jpg"));
 
     //Gamma correction
     gamma(x, y, c) = cast<uint8_t>(255 * pow(image(x, y, c) * 1.0f / 255, gamma_exponent));
@@ -333,14 +334,14 @@ inline int roi_definition(char* filename) {
     //Background removal from complemented mask
     mask_buff = complement.realize({image.width(), image.height(), image.channels()});
     background_removal(mask_buff);
-    Tools::save_image(mask_buff, strcat(file_path, "tmp_mask.jpg")); //TODO REMOVE THIS
 
     masked(x, y, c) = select(mask_buff(x, y, c) == 255, gamma(x, y, c), 0);
     masked_buff = masked.realize({image.width(), image.height(), image.channels()});
 
     //Save masked image
-    Tools::save_image(masked_buff, strcat(file_path, "dcm_masked.jpg"));
-//    return 0;
+    std::string output_path_jpeg = output_path + base_filename + "_segmented.jpg";
+    std::string output_path_dicom = output_path + base_filename + "_segmented.dcm";
+    Tools::save_image(masked_buff, output_path_jpeg);
 
     //Output file
     DcmFileFormat output_file;
@@ -352,7 +353,7 @@ inline int roi_definition(char* filename) {
     dataset->putAndInsertString(DCM_SOPClassUID, UID_SecondaryCaptureImageStorage);
     dataset->putAndInsertString(DCM_SOPInstanceUID, dcmGenerateUniqueIdentifier(uid, SITE_INSTANCE_UID_ROOT));
 //    dataset->putAndInsertUint8Array(DCM_PixelData, mask_buff.begin(), mask_buff.size_in_bytes());
-    OFCondition status = output_file.saveFile(strcat(file_path, "test.dcm"), EXS_BigEndianExplicit);
+    OFCondition status = output_file.saveFile(output_path_dicom.c_str(), EXS_BigEndianExplicit);
     if (status.bad())
         cerr << "Error: cannot write DICOM file (" << status.text() << ")" << endl;
     else
